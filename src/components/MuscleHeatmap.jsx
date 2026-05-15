@@ -180,19 +180,22 @@ function EditPanel({ muscleGroup, volumeMap, userId, onClose, onUpdate, onOpenLo
 
   return (
     <>
-      {/* backdrop */}
+      {/* backdrop — sits above nav bar */}
       <div
         onClick={onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 40, background: 'rgba(0,0,0,0.4)' }}
+        style={{ position: 'fixed', inset: 0, zIndex: 210, background: 'rgba(0,0,0,0.5)' }}
       />
 
-      {/* panel */}
+      {/* panel — above backdrop, scrollable so nothing gets clipped */}
       <div style={{
         position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)',
         width: '100%', maxWidth: '440px',
         background: 'var(--surface)', borderTop: '1px solid var(--border)',
-        borderRadius: '16px 16px 0 0', padding: '20px 24px 32px',
-        zIndex: 41, boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
+        borderRadius: '16px 16px 0 0',
+        padding: '20px 24px',
+        paddingBottom: 'calc(28px + env(safe-area-inset-bottom, 0px))',
+        zIndex: 211, boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
+        maxHeight: '85vh', overflowY: 'auto',
       }}>
         {/* drag handle */}
         <div style={{ width: '36px', height: '4px', background: 'var(--border2)', borderRadius: '2px', margin: '0 auto 16px' }} />
