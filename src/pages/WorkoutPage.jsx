@@ -90,7 +90,7 @@ function getTimeLabel(minutes) {
 // ─── styles ───────────────────────────────────────────────────────────────────
 
 const s = {
-  page: { padding: '28px', maxWidth: '900px', margin: '0 auto' },
+  page: { padding: '28px', width: '100%' },
   title: { fontFamily: 'Bebas Neue, sans-serif', fontSize: '28px', letterSpacing: '0.04em', marginBottom: '4px' },
   sub: { fontSize: '13px', color: 'var(--muted)', marginBottom: '24px' },
 

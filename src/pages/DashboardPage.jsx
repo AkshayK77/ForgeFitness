@@ -74,7 +74,7 @@ async function computeStreak(userId, sessionsPerWeek) {
 // ─── styles ───────────────────────────────────────────────────────────────────
 
 const s = {
-  page: { padding: '28px', maxWidth: '960px', margin: '0 auto' },
+  page: { padding: '28px', width: '100%' },
 
   // Greeting row
   greetingRow: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '28px' },

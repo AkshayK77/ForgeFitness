@@ -114,7 +114,7 @@ function LineGraph({ points, color = '#C8F55A', height = 160, unit = 'kg' }) {
 // ─── styles ───────────────────────────────────────────────────────────────────
 
 const s = {
-  page: { maxWidth: '880px', margin: '0 auto', padding: '28px 28px 60px' },
+  page: { width: '100%', padding: '28px 28px 60px' },
   pageTitle: { fontFamily: 'Bebas Neue, sans-serif', fontSize: '32px', letterSpacing: '0.04em', marginBottom: '32px' },
 
   section: { marginBottom: '40px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '22px 24px', overflow: 'hidden' },

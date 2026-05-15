@@ -28,7 +28,7 @@ function MacroCard({ label, current, target, color, unit }) {
 }
 
 const s = {
-  page: { maxWidth: '880px', margin: '0 auto', padding: '28px 28px 60px' },
+  page: { width: '100%', padding: '28px 28px 60px' },
   title: { fontFamily: 'Bebas Neue, sans-serif', fontSize: '32px', letterSpacing: '0.04em', marginBottom: '32px' },
   card: { marginBottom: '20px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', padding: '22px 24px' },
   cardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' },
