@@ -8,7 +8,7 @@ import LoginPage from './pages/LoginPage'
 import OnboardingPage from './pages/OnboardingPage'
 import DashboardPage from './pages/DashboardPage'
 import WorkoutPage from './pages/WorkoutPage'
-import AnatomyPage from './pages/AnatomyPage'
+import BodyLabPage from './pages/BodyLabPage'
 import ProgressPage from './pages/ProgressPage'
 import NutritionPage from './pages/NutritionPage'
 import AIPage from './pages/AIPage'
@@ -38,7 +38,7 @@ export default function App() {
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/workout" element={<WorkoutPage />} />
-              <Route path="/anatomy" element={<AnatomyPage />} />
+              <Route path="/anatomy" element={<BodyLabPage />} />
               <Route path="/progress" element={<ProgressPage />} />
               <Route path="/nutrition" element={<NutritionPage />} />
               <Route path="/ai" element={<AIPage />} />

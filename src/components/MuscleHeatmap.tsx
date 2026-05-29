@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { BodyChart, ViewSide } from 'body-muscles'
+import type { BodyState } from 'body-muscles'
 import { getWeeklyVolume, getVolumeStatus, setVolumeManual, VOLUME_THRESHOLDS } from '../lib/volumeTracker'
 import { useIsMobile } from '../hooks/useIsMobile'
 import ManualWorkoutLogger from './ManualWorkoutLogger'
@@ -11,170 +13,107 @@ interface VolumeRow {
   updated_at: string | null
 }
 
-interface RegionAttrs {
-  cx?: number
-  cy?: number
-  rx?: number
-  ry?: number
-  x?: number
-  y?: number
-  width?: number
-  height?: number
-  rx2?: number
+// ─── Muscle ID ↔ volume group mappings ────────────────────────────────────────
+
+const MUSCLE_ID_TO_GROUP: Record<string, string> = {
+  'chest-upper-left': 'chest', 'chest-lower-left': 'chest',
+  'chest-upper-right': 'chest', 'chest-lower-right': 'chest',
+  'shoulder-front-left': 'shoulders', 'shoulder-side-left': 'shoulders',
+  'shoulder-front-right': 'shoulders', 'shoulder-side-right': 'shoulders',
+  'deltoid-rear-left': 'shoulders', 'deltoid-rear-right': 'shoulders',
+  'triceps-long-left': 'triceps', 'triceps-lateral-left': 'triceps',
+  'triceps-long-right': 'triceps', 'triceps-lateral-right': 'triceps',
+  'lats-upper-left': 'lats', 'lats-mid-left': 'lats', 'lats-lower-left': 'lats',
+  'lats-upper-right': 'lats', 'lats-mid-right': 'lats', 'lats-lower-right': 'lats',
+  'traps-upper-left': 'mid_back', 'traps-mid-left': 'mid_back', 'traps-lower-left': 'mid_back',
+  'traps-upper-right': 'mid_back', 'traps-mid-right': 'mid_back', 'traps-lower-right': 'mid_back',
+  'spine': 'mid_back',
+  'lower-back-erectors-left': 'mid_back', 'lower-back-ql-left': 'mid_back',
+  'lower-back-erectors-right': 'mid_back', 'lower-back-ql-right': 'mid_back',
+  'biceps-left': 'biceps', 'biceps-right': 'biceps',
+  'forearm-left': 'forearms', 'forearm-right': 'forearms',
+  'forearm-flexors-left': 'forearms', 'forearm-extensors-left': 'forearms',
+  'forearm-flexors-right': 'forearms', 'forearm-extensors-right': 'forearms',
+  'quads-left': 'quads', 'quads-right': 'quads',
+  'hamstrings-medial-left': 'hamstrings', 'hamstrings-lateral-left': 'hamstrings',
+  'hamstrings-medial-right': 'hamstrings', 'hamstrings-lateral-right': 'hamstrings',
+  'gluteus-maximus-left': 'glutes', 'gluteus-medius-left': 'glutes',
+  'gluteus-maximus-right': 'glutes', 'gluteus-medius-right': 'glutes',
+  'tibialis-anterior-left': 'calves', 'tibialis-anterior-right': 'calves',
+  'calves-gastroc-medial-left': 'calves', 'calves-gastroc-lateral-left': 'calves',
+  'calves-soleus-left': 'calves',
+  'calves-gastroc-medial-right': 'calves', 'calves-gastroc-lateral-right': 'calves',
+  'calves-soleus-right': 'calves',
 }
 
-interface Region {
-  id: string
-  shape: 'ellipse' | 'rect'
-  attrs: Record<string, number>
-  muscleGroup?: string
+const FRONT_MUSCLE_IDS: Record<string, string[]> = {
+  chest: ['chest-upper-left', 'chest-lower-left', 'chest-upper-right', 'chest-lower-right'],
+  shoulders: ['shoulder-front-left', 'shoulder-side-left', 'shoulder-front-right', 'shoulder-side-right'],
+  triceps: [],
+  lats: [],
+  mid_back: [],
+  biceps: ['biceps-left', 'biceps-right'],
+  forearms: ['forearm-left', 'forearm-right'],
+  quads: ['quads-left', 'quads-right'],
+  hamstrings: [],
+  glutes: [],
+  calves: ['tibialis-anterior-left', 'tibialis-anterior-right'],
 }
 
-// ─── region definitions ──────────────────────────────────────────────────────
-
-const FRONT_REGIONS: Region[] = [
-  { id: 'head-f', shape: 'ellipse', attrs: { cx: 50, cy: 14, rx: 12, ry: 13 } },
-  { id: 'neck-f', shape: 'rect', attrs: { x: 45, y: 27, width: 10, height: 8, rx: 2 } },
-  { id: 'abs', shape: 'rect', attrs: { x: 37, y: 71, width: 26, height: 30, rx: 4 } },
-  { id: 'hip-l', shape: 'rect', attrs: { x: 32, y: 102, width: 14, height: 12, rx: 3 } },
-  { id: 'hip-r', shape: 'rect', attrs: { x: 54, y: 102, width: 14, height: 12, rx: 3 } },
-  { id: 'forearm-l', muscleGroup: 'forearms', shape: 'rect', attrs: { x: 14, y: 88, width: 9, height: 20, rx: 4 } },
-  { id: 'forearm-r', muscleGroup: 'forearms', shape: 'rect', attrs: { x: 77, y: 88, width: 9, height: 20, rx: 4 } },
-  { id: 'chest', muscleGroup: 'chest', shape: 'rect', attrs: { x: 32, y: 40, width: 36, height: 28, rx: 5 } },
-  { id: 'delt-l', muscleGroup: 'shoulders', shape: 'ellipse', attrs: { cx: 25, cy: 50, rx: 9, ry: 9 } },
-  { id: 'delt-r', muscleGroup: 'shoulders', shape: 'ellipse', attrs: { cx: 75, cy: 50, rx: 9, ry: 9 } },
-  { id: 'bicep-l', muscleGroup: 'biceps', shape: 'rect', attrs: { x: 15, y: 62, width: 10, height: 24, rx: 5 } },
-  { id: 'bicep-r', muscleGroup: 'biceps', shape: 'rect', attrs: { x: 75, y: 62, width: 10, height: 24, rx: 5 } },
-  { id: 'quad-l', muscleGroup: 'quads', shape: 'rect', attrs: { x: 33, y: 116, width: 16, height: 46, rx: 6 } },
-  { id: 'quad-r', muscleGroup: 'quads', shape: 'rect', attrs: { x: 51, y: 116, width: 16, height: 46, rx: 6 } },
-  { id: 'calf-fl', muscleGroup: 'calves', shape: 'rect', attrs: { x: 34, y: 166, width: 14, height: 34, rx: 5 } },
-  { id: 'calf-fr', muscleGroup: 'calves', shape: 'rect', attrs: { x: 52, y: 166, width: 14, height: 34, rx: 5 } },
-]
-
-const BACK_REGIONS: Region[] = [
-  { id: 'head-b', shape: 'ellipse', attrs: { cx: 50, cy: 14, rx: 12, ry: 13 } },
-  { id: 'neck-b', shape: 'rect', attrs: { x: 45, y: 27, width: 10, height: 8, rx: 2 } },
-  { id: 'forearm-bl', muscleGroup: 'forearms', shape: 'rect', attrs: { x: 14, y: 88, width: 9, height: 20, rx: 4 } },
-  { id: 'forearm-br', muscleGroup: 'forearms', shape: 'rect', attrs: { x: 77, y: 88, width: 9, height: 20, rx: 4 } },
-  { id: 'trap-l', muscleGroup: 'mid_back', shape: 'rect', attrs: { x: 30, y: 36, width: 14, height: 16, rx: 4 } },
-  { id: 'trap-r', muscleGroup: 'mid_back', shape: 'rect', attrs: { x: 56, y: 36, width: 14, height: 16, rx: 4 } },
-  { id: 'rdelt-l', muscleGroup: 'shoulders', shape: 'ellipse', attrs: { cx: 24, cy: 52, rx: 9, ry: 9 } },
-  { id: 'rdelt-r', muscleGroup: 'shoulders', shape: 'ellipse', attrs: { cx: 76, cy: 52, rx: 9, ry: 9 } },
-  { id: 'rhomboid', muscleGroup: 'mid_back', shape: 'rect', attrs: { x: 37, y: 52, width: 26, height: 26, rx: 4 } },
-  { id: 'lat-l', muscleGroup: 'lats', shape: 'rect', attrs: { x: 22, y: 58, width: 14, height: 36, rx: 5 } },
-  { id: 'lat-r', muscleGroup: 'lats', shape: 'rect', attrs: { x: 64, y: 58, width: 14, height: 36, rx: 5 } },
-  { id: 'tri-l', muscleGroup: 'triceps', shape: 'rect', attrs: { x: 14, y: 62, width: 9, height: 26, rx: 4 } },
-  { id: 'tri-r', muscleGroup: 'triceps', shape: 'rect', attrs: { x: 77, y: 62, width: 9, height: 26, rx: 4 } },
-  { id: 'glute', muscleGroup: 'glutes', shape: 'rect', attrs: { x: 32, y: 106, width: 36, height: 24, rx: 6 } },
-  { id: 'ham-l', muscleGroup: 'hamstrings', shape: 'rect', attrs: { x: 33, y: 132, width: 16, height: 40, rx: 6 } },
-  { id: 'ham-r', muscleGroup: 'hamstrings', shape: 'rect', attrs: { x: 51, y: 132, width: 16, height: 40, rx: 6 } },
-  { id: 'calf-bl', muscleGroup: 'calves', shape: 'rect', attrs: { x: 34, y: 176, width: 14, height: 30, rx: 5 } },
-  { id: 'calf-br', muscleGroup: 'calves', shape: 'rect', attrs: { x: 52, y: 176, width: 14, height: 30, rx: 5 } },
-]
-
-const STATUS_COLORS: Record<VolumeStatus, (o: number) => string> = {
-  none: (o) => `rgba(51,51,51,${o})`,
-  low: (o) => `rgba(245,166,35,${0.6 * o})`,
-  optimal: (o) => `rgba(200,245,90,${0.75 * o})`,
-  high: (o) => `rgba(255,92,92,${0.55 * o})`,
+const BACK_MUSCLE_IDS: Record<string, string[]> = {
+  chest: [],
+  shoulders: ['deltoid-rear-left', 'deltoid-rear-right'],
+  triceps: ['triceps-long-left', 'triceps-lateral-left', 'triceps-long-right', 'triceps-lateral-right'],
+  lats: ['lats-upper-left', 'lats-mid-left', 'lats-lower-left', 'lats-upper-right', 'lats-mid-right', 'lats-lower-right'],
+  mid_back: ['traps-upper-left', 'traps-mid-left', 'traps-lower-left', 'traps-upper-right', 'traps-mid-right', 'traps-lower-right', 'spine', 'lower-back-erectors-left', 'lower-back-ql-left', 'lower-back-erectors-right', 'lower-back-ql-right'],
+  biceps: [],
+  forearms: ['forearm-flexors-left', 'forearm-extensors-left', 'forearm-flexors-right', 'forearm-extensors-right'],
+  quads: [],
+  hamstrings: ['hamstrings-medial-left', 'hamstrings-lateral-left', 'hamstrings-medial-right', 'hamstrings-lateral-right'],
+  glutes: ['gluteus-maximus-left', 'gluteus-medius-left', 'gluteus-maximus-right', 'gluteus-medius-right'],
+  calves: ['calves-gastroc-medial-left', 'calves-gastroc-lateral-left', 'calves-soleus-left', 'calves-gastroc-medial-right', 'calves-gastroc-lateral-right', 'calves-soleus-right'],
 }
+
+function statusToIntensity(status: string): number {
+  if (status === 'low') return 3
+  if (status === 'optimal') return 6
+  if (status === 'high') return 10
+  return 0
+}
+
+function buildHeatmapState(
+  volumeMap: Record<string, VolumeRow>,
+  selectedMuscle: string | null,
+  muscleIds: Record<string, string[]>
+): BodyState {
+  const state: BodyState = {}
+  for (const [group, ids] of Object.entries(muscleIds)) {
+    if (!ids.length) continue
+    const sets = volumeMap[group]?.total_sets || 0
+    const intensity = statusToIntensity(getVolumeStatus(group, sets))
+    const selected = group === selectedMuscle
+    for (const id of ids) state[id] = { intensity, selected }
+  }
+  return state
+}
+
+// ─── Status display constants (used by legend + EditPanel) ────────────────────
 
 const STATUS_DOT_COLORS: Record<VolumeStatus, string> = {
-  none: '#555555',
-  low: '#f5a623',
-  optimal: '#C8F55A',
-  high: '#ff5c5c',
+  none: '#555555', low: '#f5a623', optimal: '#C8F55A', high: '#ff5c5c',
 }
-
 const STATUS_LABELS: Record<VolumeStatus, string> = {
-  none: 'Not trained',
-  low: 'Below target',
-  optimal: 'On track',
-  high: 'Overloaded',
+  none: 'Not trained', low: 'Below target', optimal: 'On track', high: 'Overloaded',
 }
-
-const DECORATIVE_FILL = '#1e1e1e'
-const DECORATIVE_STROKE = '#2a2a2a'
-
+const STATUS_LEGEND = [
+  { color: '#94a3b8', label: 'Not trained' },
+  { color: '#eab308', label: 'Below target' },
+  { color: '#4ade80', label: 'On track' },
+  { color: '#7f1d1d', label: 'Overloaded' },
+]
 const ALL_MUSCLE_GROUPS = Object.keys(VOLUME_THRESHOLDS)
 
-const STATUS_LEGEND = [
-  { color: '#333333', label: 'Not trained this week' },
-  { color: 'rgba(245,166,35,0.6)', label: 'Below target volume' },
-  { color: 'rgba(200,245,90,0.75)', label: 'Optimal volume' },
-  { color: 'rgba(255,92,92,0.55)', label: 'Overdue or overtrained' },
-]
-
-function regionFill(muscleGroup: string | undefined, volumeMap: Record<string, VolumeRow>): string {
-  if (!muscleGroup) return DECORATIVE_FILL
-  const row = volumeMap[muscleGroup]
-  const sets = row?.total_sets || 0
-  const status = getVolumeStatus(muscleGroup, sets) as VolumeStatus
-  let opacity = 1
-  if (row?.updated_at) {
-    const daysSince = (Date.now() - new Date(row.updated_at).getTime()) / 86400000
-    if (daysSince > 3) opacity = 0.7
-  }
-  return (STATUS_COLORS[status] || STATUS_COLORS.none)(opacity)
-}
-
-// ─── BodySVG ─────────────────────────────────────────────────────────────────
-
-interface BodySVGProps {
-  regions: Region[]
-  label: string
-  volumeMap: Record<string, VolumeRow>
-  selectedMuscle: string | null
-  onMuscleClick: (muscleGroup: string) => void
-}
-
-function BodySVG({ regions, label, volumeMap, selectedMuscle, onMuscleClick }: BodySVGProps) {
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
-
-  return (
-    <div style={{ textAlign: 'center' }}>
-      <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '6px' }}>
-        {label}
-      </div>
-      <svg viewBox="0 0 100 210" width="110" height="231" style={{ display: 'block', margin: '0 auto' }}>
-        {regions.map(r => {
-          const isInteractive = !!r.muscleGroup
-          const isSelected = r.muscleGroup === selectedMuscle
-          const isHovered = r.id === hoveredId && isInteractive
-
-          const fill = regionFill(r.muscleGroup, volumeMap)
-          const stroke = isSelected
-            ? 'rgba(255,255,255,0.55)'
-            : isHovered
-              ? 'rgba(255,255,255,0.28)'
-              : isInteractive ? 'rgba(255,255,255,0.06)' : DECORATIVE_STROKE
-
-          const common = {
-            fill,
-            stroke,
-            strokeWidth: isSelected ? 1.4 : 0.8,
-            cursor: isInteractive ? 'pointer' : 'default',
-            opacity: isHovered ? 0.82 : 1,
-            transition: 'opacity 0.1s',
-          }
-
-          const handlers = isInteractive
-            ? {
-              onMouseEnter: () => setHoveredId(r.id),
-              onMouseLeave: () => setHoveredId(null),
-              onClick: () => onMuscleClick(r.muscleGroup!),
-            }
-            : {}
-
-          if (r.shape === 'ellipse') return <ellipse key={r.id} {...r.attrs} {...common} {...handlers} />
-          return <rect key={r.id} {...r.attrs} {...common} {...handlers} />
-        })}
-      </svg>
-    </div>
-  )
-}
-
-// ─── EditPanel ────────────────────────────────────────────────────────────────
+// ─── EditPanel (unchanged) ────────────────────────────────────────────────────
 
 interface EditPanelProps {
   muscleGroup: string
@@ -192,26 +131,17 @@ function EditPanel({ muscleGroup, volumeMap, userId, onClose, onUpdate, onOpenLo
   const status = getVolumeStatus(muscleGroup, current) as VolumeStatus
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
   const persist = useCallback((sets: number) => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      setVolumeManual(userId, muscleGroup, sets)
-    }, 400)
+    saveTimerRef.current = setTimeout(() => { setVolumeManual(userId, muscleGroup, sets) }, 400)
   }, [userId, muscleGroup])
-
   useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }, [])
 
   function adjust(delta: number) {
     const next = Math.max(0, current + delta)
-    onUpdate(muscleGroup, next)
-    persist(next)
+    onUpdate(muscleGroup, next); persist(next)
   }
-
-  function setPreset(sets: number) {
-    onUpdate(muscleGroup, sets)
-    persist(sets)
-  }
+  function setPreset(sets: number) { onUpdate(muscleGroup, sets); persist(sets) }
 
   const presets = [
     { label: 'None', sets: 0, status: 'none' as VolumeStatus },
@@ -220,109 +150,61 @@ function EditPanel({ muscleGroup, volumeMap, userId, onClose, onUpdate, onOpenLo
     { label: 'Max', sets: t.max, status: 'optimal' as VolumeStatus },
   ]
 
-  const name = muscleGroup.replace(/_/g, ' ')
-
   return (
     <>
-      {/* backdrop — sits above nav bar */}
-      <div
-        onClick={onClose}
-        style={{ position: 'fixed', inset: 0, zIndex: 210, background: 'rgba(0,0,0,0.5)' }}
-      />
-
-      {/* panel — above backdrop, scrollable so nothing gets clipped */}
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 210, background: 'rgba(0,0,0,0.5)' }} />
       <div style={{
         position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)',
         width: '100%', maxWidth: '440px',
         background: 'var(--surface)', borderTop: '1px solid var(--border)',
-        borderRadius: '16px 16px 0 0',
-        padding: '20px 24px',
+        borderRadius: '16px 16px 0 0', padding: '20px 24px',
         paddingBottom: 'calc(28px + env(safe-area-inset-bottom, 0px))',
         zIndex: 211, boxShadow: '0 -8px 32px rgba(0,0,0,0.5)',
         maxHeight: 'calc(100dvh - 24px)', overflowY: 'auto', boxSizing: 'border-box',
       }}>
-        {/* drag handle */}
         <div style={{ width: '36px', height: '4px', background: 'var(--border2)', borderRadius: '2px', margin: '0 auto 16px' }} />
-
-        {/* header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
           <div>
             <div style={{ fontFamily: 'Bebas Neue, sans-serif', fontSize: '22px', letterSpacing: '0.04em', textTransform: 'capitalize' }}>
-              {name}
+              {muscleGroup.replace(/_/g, ' ')}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
               <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: STATUS_DOT_COLORS[status] }} />
               <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{STATUS_LABELS[status]}</span>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer', padding: '4px', lineHeight: 1 }}
-          >
-            ×
-          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer', padding: '4px', lineHeight: 1 }}>×</button>
         </div>
-
-        {/* set count adjuster */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '20px', marginBottom: '20px' }}>
-          <button
-            onClick={() => adjust(-2)}
-            style={adjBtnStyle}
-          >
-            −
-          </button>
+          <button onClick={() => adjust(-2)} style={adjBtnStyle}>−</button>
           <div style={{ textAlign: 'center', minWidth: '80px' }}>
-            <div style={{ fontFamily: 'Bebas Neue, sans-serif', fontSize: '40px', letterSpacing: '0.04em', lineHeight: 1, color: STATUS_DOT_COLORS[status] }}>
-              {current}
-            </div>
-            <div style={{ fontSize: '11px', color: 'var(--dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              sets · target {t.min}–{t.max}
-            </div>
+            <div style={{ fontFamily: 'Bebas Neue, sans-serif', fontSize: '40px', letterSpacing: '0.04em', lineHeight: 1, color: STATUS_DOT_COLORS[status] }}>{current}</div>
+            <div style={{ fontSize: '11px', color: 'var(--dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>sets · target {t.min}–{t.max}</div>
           </div>
-          <button
-            onClick={() => adjust(2)}
-            style={adjBtnStyle}
-          >
-            +
-          </button>
+          <button onClick={() => adjust(2)} style={adjBtnStyle}>+</button>
         </div>
-
-        {/* quick presets */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
           {presets.map(p => {
             const isActive = current === p.sets
             return (
-              <button
-                key={p.label}
-                onClick={() => setPreset(p.sets)}
-                style={{
-                  padding: '8px 0',
-                  background: isActive ? `${STATUS_DOT_COLORS[p.status]}22` : 'var(--surface2, #1a1a1a)',
-                  border: `1px solid ${isActive ? STATUS_DOT_COLORS[p.status] : 'var(--border)'}`,
-                  borderRadius: '8px',
-                  color: isActive ? STATUS_DOT_COLORS[p.status] : 'var(--muted)',
-                  fontSize: '11px', fontWeight: '600', letterSpacing: '0.04em',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  transition: 'border-color 0.15s, color 0.15s',
-                }}
-              >
+              <button key={p.label} onClick={() => setPreset(p.sets)} style={{
+                padding: '8px 0', background: isActive ? `${STATUS_DOT_COLORS[p.status]}22` : 'var(--surface2, #1a1a1a)',
+                border: `1px solid ${isActive ? STATUS_DOT_COLORS[p.status] : 'var(--border)'}`,
+                borderRadius: '8px', color: isActive ? STATUS_DOT_COLORS[p.status] : 'var(--muted)',
+                fontSize: '11px', fontWeight: '600', letterSpacing: '0.04em', cursor: 'pointer', fontFamily: 'inherit',
+              }}>
                 <div>{p.label}</div>
                 <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '2px' }}>{p.sets} sets</div>
               </button>
             )
           })}
         </div>
-
-        {/* log full workout link */}
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '14px', textAlign: 'center' }}>
-          <button
-            onClick={onOpenLogger}
-            style={{
-              background: 'none', border: '1px solid var(--border2)', borderRadius: '8px',
-              color: 'var(--text)', fontSize: '13px', fontWeight: '500',
-              cursor: 'pointer', padding: '9px 20px', fontFamily: 'inherit', width: '100%',
-            }}
-          >
+          <button onClick={onOpenLogger} style={{
+            background: 'none', border: '1px solid var(--border2)', borderRadius: '8px',
+            color: 'var(--text)', fontSize: '13px', fontWeight: '500',
+            cursor: 'pointer', padding: '9px 20px', fontFamily: 'inherit', width: '100%',
+          }}>
             Log a full workout instead →
           </button>
         </div>
@@ -332,15 +214,12 @@ function EditPanel({ muscleGroup, volumeMap, userId, onClose, onUpdate, onOpenLo
 }
 
 const adjBtnStyle: React.CSSProperties = {
-  width: '44px', height: '44px',
-  background: 'var(--surface2, #1a1a1a)', border: '1px solid var(--border2)',
-  borderRadius: '50%', color: 'var(--text)', fontSize: '22px', fontWeight: '300',
-  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  width: '44px', height: '44px', background: 'var(--surface2, #1a1a1a)',
+  border: '1px solid var(--border2)', borderRadius: '50%', color: 'var(--text)',
+  fontSize: '22px', fontWeight: '300', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontFamily: 'inherit', lineHeight: 1,
 }
-
-// Need React import for CSSProperties
-import React from 'react'
 
 // ─── MuscleHeatmap ────────────────────────────────────────────────────────────
 
@@ -350,6 +229,17 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
   const [selectedMuscle, setSelectedMuscle] = useState<string | null>(null)
   const [showLogger, setShowLogger] = useState(false)
   const isMobile = useIsMobile()
+
+  const frontRef = useRef<HTMLDivElement>(null)
+  const backRef = useRef<HTMLDivElement>(null)
+  const frontChart = useRef<BodyChart | null>(null)
+  const backChart = useRef<BodyChart | null>(null)
+
+  // Keep latest values accessible inside BodyChart callbacks without recreating handlers
+  const volumeMapRef = useRef(volumeMap)
+  const selectedRef = useRef(selectedMuscle)
+  useEffect(() => { volumeMapRef.current = volumeMap }, [volumeMap])
+  useEffect(() => { selectedRef.current = selectedMuscle }, [selectedMuscle])
 
   function loadVolume() {
     if (!userId) return
@@ -363,9 +253,54 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
 
   useEffect(() => { loadVolume() }, [userId, refreshKey])
 
-  function handleMuscleClick(muscleGroup: string) {
-    setSelectedMuscle(prev => prev === muscleGroup ? null : muscleGroup)
-  }
+  // Mount charts once — must wait until loading is done so the ref divs are in the DOM
+  useEffect(() => {
+    if (loading) return
+    if (!frontRef.current || !backRef.current) return
+    const handleClick = (id: string) => {
+      const group = MUSCLE_ID_TO_GROUP[id]
+      if (group) setSelectedMuscle(prev => prev === group ? null : group)
+    }
+    frontChart.current = new BodyChart(frontRef.current, {
+      view: ViewSide.FRONT,
+      bodyState: buildHeatmapState(volumeMapRef.current, selectedRef.current, FRONT_MUSCLE_IDS),
+      onMuscleClick: handleClick,
+    })
+    backChart.current = new BodyChart(backRef.current, {
+      view: ViewSide.BACK,
+      bodyState: buildHeatmapState(volumeMapRef.current, selectedRef.current, BACK_MUSCLE_IDS),
+      onMuscleClick: handleClick,
+    })
+    return () => { frontChart.current?.destroy(); backChart.current?.destroy() }
+  }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync charts whenever volume data or selection changes
+  useEffect(() => {
+    frontChart.current?.update({ bodyState: buildHeatmapState(volumeMap, selectedMuscle, FRONT_MUSCLE_IDS) })
+    backChart.current?.update({ bodyState: buildHeatmapState(volumeMap, selectedMuscle, BACK_MUSCLE_IDS) })
+  }, [volumeMap, selectedMuscle])
+
+  const applyOnTrackColor = useCallback((container: HTMLDivElement | null) => {
+    if (!container) return
+    const paths = container.querySelectorAll<SVGPathElement>('.body-chart-muscle')
+    paths.forEach(path => {
+      const label = path.getAttribute('aria-label') || ''
+      const isOnTrack = label.includes('intensity 6')
+      if (isOnTrack) {
+        path.style.fill = '#4ade80'
+      } else if (path.style.fill === 'rgb(74, 222, 128)') {
+        path.style.removeProperty('fill')
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    const raf = window.requestAnimationFrame(() => {
+      applyOnTrackColor(frontRef.current)
+      applyOnTrackColor(backRef.current)
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [volumeMap, selectedMuscle, applyOnTrackColor])
 
   function handleUpdate(muscleGroup: string, newSets: number) {
     setVolumeMap(prev => ({
@@ -382,14 +317,60 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
     return <div style={{ color: 'var(--dim)', fontSize: '12px', padding: '20px 0' }}>Loading muscle data…</div>
   }
 
+  const labelStyle: React.CSSProperties = {
+    fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em',
+    textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '4px', textAlign: 'center',
+  }
+
+  const CHART_W = isMobile ? '130px' : '140px'
+
+  const charts = (
+    <div style={{
+      display: 'flex', gap: '12px', alignItems: 'flex-start', flexShrink: 0,
+      ...(isMobile ? { width: '100%', justifyContent: 'center' } : {}),
+    }}>
+      <div>
+        <div style={labelStyle}>Front</div>
+        <div ref={frontRef} style={{ width: CHART_W }} />
+      </div>
+      <div>
+        <div style={labelStyle}>Back</div>
+        <div ref={backRef} style={{ width: CHART_W }} />
+      </div>
+    </div>
+  )
+
+  const volumeList = (mg: string) => {
+    const row = volumeMap[mg]
+    const sets = row?.total_sets || 0
+    const status = getVolumeStatus(mg, sets) as VolumeStatus
+    const t = VOLUME_THRESHOLDS[mg as keyof typeof VOLUME_THRESHOLDS]
+    const isSelected = mg === selectedMuscle
+    return (
+      <div
+        key={mg}
+        onClick={() => setSelectedMuscle(prev => prev === mg ? null : mg)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px',
+          cursor: 'pointer', padding: '4px 6px', borderRadius: '6px',
+          background: isSelected ? 'var(--surface2, rgba(255,255,255,0.05))' : 'transparent',
+          transition: 'background 0.15s',
+        }}
+      >
+        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: STATUS_DOT_COLORS[status], flexShrink: 0 }} />
+        <span style={{ color: 'var(--text)', flex: 1, textTransform: 'capitalize' }}>{mg.replace(/_/g, ' ')}</span>
+        <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{sets}{t ? ` / ${t.min}–${t.max}` : ''}</span>
+      </div>
+    )
+  }
+
   const logBtn = (
     <button
       onClick={() => { setSelectedMuscle(null); setShowLogger(true) }}
       style={{
         padding: '7px 14px', background: 'var(--accent)', border: 'none',
         borderRadius: '7px', color: '#0a0a0a', fontSize: '12px', fontWeight: '700',
-        cursor: 'pointer', letterSpacing: '0.02em', fontFamily: 'inherit',
-        flexShrink: 0,
+        cursor: 'pointer', letterSpacing: '0.02em', fontFamily: 'inherit', flexShrink: 0,
       }}
     >
       + Log Workout
@@ -398,7 +379,6 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
 
   return (
     <div>
-      {/* header row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
         <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--dim)' }}>
           Tap a muscle to adjust
@@ -406,81 +386,52 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
         {logBtn}
       </div>
 
-      {isMobile ? (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '32px', marginBottom: '16px' }}>
-            <BodySVG regions={FRONT_REGIONS} label="Front" volumeMap={volumeMap} selectedMuscle={selectedMuscle} onMuscleClick={handleMuscleClick} />
-            <BodySVG regions={BACK_REGIONS} label="Back" volumeMap={volumeMap} selectedMuscle={selectedMuscle} onMuscleClick={handleMuscleClick} />
-          </div>
+      <div style={{
+        display: 'flex',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: isMobile ? '16px' : '24px',
+        alignItems: isMobile ? 'center' : 'flex-start',
+      }}>
+        {charts}
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '8px' }}>
             This week
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
-            {ALL_MUSCLE_GROUPS.map(mg => {
-              const row = volumeMap[mg]
-              const sets = row?.total_sets || 0
-              const status = getVolumeStatus(mg, sets) as VolumeStatus
-              const isSelected = mg === selectedMuscle
-              return (
-                <div
-                  key={mg}
-                  onClick={() => handleMuscleClick(mg)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
-                    cursor: 'pointer', padding: '3px 4px', borderRadius: '4px',
-                    background: isSelected ? 'var(--surface2, rgba(255,255,255,0.05))' : 'transparent',
-                  }}
-                >
-                  <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: STATUS_DOT_COLORS[status], flexShrink: 0 }} />
-                  <span style={{ color: 'var(--text)', textTransform: 'capitalize', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {mg.replace(/_/g, ' ')}
-                  </span>
-                  <span style={{ color: 'var(--muted)', fontSize: '10px', flexShrink: 0 }}>{sets}</span>
-                </div>
-              )
-            })}
-          </div>
-        </>
-      ) : (
-        <div style={{ display: 'flex', gap: '32px', alignItems: 'flex-start' }}>
-          <div style={{ display: 'flex', gap: '24px' }}>
-            <BodySVG regions={FRONT_REGIONS} label="Front" volumeMap={volumeMap} selectedMuscle={selectedMuscle} onMuscleClick={handleMuscleClick} />
-            <BodySVG regions={BACK_REGIONS} label="Back" volumeMap={volumeMap} selectedMuscle={selectedMuscle} onMuscleClick={handleMuscleClick} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: '10px', fontWeight: '600', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--dim)', marginBottom: '10px' }}>
-              This week
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {isMobile ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
               {ALL_MUSCLE_GROUPS.map(mg => {
                 const row = volumeMap[mg]
                 const sets = row?.total_sets || 0
                 const status = getVolumeStatus(mg, sets) as VolumeStatus
-                const t = VOLUME_THRESHOLDS[mg as keyof typeof VOLUME_THRESHOLDS]
                 const isSelected = mg === selectedMuscle
                 return (
                   <div
                     key={mg}
-                    onClick={() => handleMuscleClick(mg)}
+                    onClick={() => setSelectedMuscle(prev => prev === mg ? null : mg)}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px',
-                      cursor: 'pointer', padding: '4px 6px', borderRadius: '6px',
+                      display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px',
+                      cursor: 'pointer', padding: '3px 4px', borderRadius: '4px',
                       background: isSelected ? 'var(--surface2, rgba(255,255,255,0.05))' : 'transparent',
-                      transition: 'background 0.15s',
                     }}
                   >
-                    <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: STATUS_DOT_COLORS[status], flexShrink: 0 }} />
-                    <span style={{ color: 'var(--text)', flex: 1, textTransform: 'capitalize' }}>{mg.replace(/_/g, ' ')}</span>
-                    <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{sets} / {t.min}–{t.max}</span>
+                    <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: STATUS_DOT_COLORS[status], flexShrink: 0 }} />
+                    <span style={{ color: 'var(--text)', textTransform: 'capitalize', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {mg.replace(/_/g, ' ')}
+                    </span>
+                    <span style={{ color: 'var(--muted)', fontSize: '10px', flexShrink: 0 }}>{sets}</span>
                   </div>
                 )
               })}
             </div>
-          </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {ALL_MUSCLE_GROUPS.map(volumeList)}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {/* legend */}
+      {/* Legend — reflects library intensity scale */}
       <div style={{ display: 'flex', gap: '16px', marginTop: '16px', flexWrap: 'wrap' }}>
         {STATUS_LEGEND.map(({ color, label }) => (
           <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--muted)' }}>
@@ -490,7 +441,6 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
         ))}
       </div>
 
-      {/* edit panel */}
       {selectedMuscle && (
         <EditPanel
           muscleGroup={selectedMuscle}
@@ -502,7 +452,6 @@ export default function MuscleHeatmap({ userId, refreshKey }: { userId: string; 
         />
       )}
 
-      {/* manual workout logger */}
       {showLogger && (
         <ManualWorkoutLogger
           onClose={() => setShowLogger(false)}

@@ -16,7 +16,7 @@ interface ActiveTimer {
 const NAV_ITEMS = [
   { label: 'Dashboard', path: '/dashboard', icon: GridIcon },
   { label: 'Workout',   path: '/workout',   icon: DumbbellIcon },
-  { label: 'Anatomy',   path: '/anatomy',   icon: BodyIcon },
+  { label: 'Body Lab',  path: '/anatomy',   icon: BodyIcon },
   { label: 'Progress',  path: '/progress',  icon: ChartIcon },
   { label: 'Nutrition', path: '/nutrition', icon: NutritionIcon },
   { label: 'AI Coach',  path: '/ai',        icon: ChatNavIcon },

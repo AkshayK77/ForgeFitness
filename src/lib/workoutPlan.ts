@@ -298,6 +298,148 @@ export async function generateOneOffSession(userId: string, profile: Profile) {
   return { session, exercises, sessionName: result.sessionName }
 }
 
+// ─── Weekly plan by type ──────────────────────────────────────────────────────
+
+const WEEKLY_PLAN_STRUCTURES: Record<string, { name: string; structure: string[] }> = {
+  ppl: {
+    name: 'Push Pull Legs',
+    structure: [
+      'Push Day (Chest, Shoulders, Triceps)',
+      'Pull Day (Back, Biceps)',
+      'Legs Day (Quads, Hamstrings, Glutes, Calves)',
+      'Push Day (Chest, Shoulders, Triceps)',
+      'Pull Day (Back, Biceps)',
+      'Legs Day (Quads, Hamstrings, Glutes, Calves)',
+      'Rest',
+    ],
+  },
+  ppl_ul: {
+    name: 'PPL + Upper Lower',
+    structure: [
+      'Push Day (Chest, Shoulders, Triceps)',
+      'Pull Day (Back, Biceps)',
+      'Legs Day (Quads, Hamstrings, Glutes, Calves)',
+      'Upper Body (Chest, Back, Shoulders, Arms)',
+      'Lower Body (Quads, Hamstrings, Glutes, Calves)',
+      'Rest',
+      'Rest',
+    ],
+  },
+  bro: {
+    name: 'Bro Split',
+    structure: [
+      'Chest & Triceps',
+      'Back & Biceps',
+      'Shoulders & Traps',
+      'Arms (Biceps & Triceps)',
+      'Legs (Quads, Hamstrings, Glutes, Calves)',
+      'Full Body',
+      'Rest',
+    ],
+  },
+  full_body: {
+    name: 'Full Body',
+    structure: ['Full Body', 'Rest', 'Full Body', 'Rest', 'Full Body', 'Rest', 'Full Body'],
+  },
+}
+
+export async function generateWeeklyPlanByType(userId: string, profile: Profile, planTypeId: string) {
+  const planConfig = WEEKLY_PLAN_STRUCTURES[planTypeId]
+  if (!planConfig) throw new Error(`Unknown plan type: ${planTypeId}`)
+
+  const { data: allExercises, error } = await supabase
+    .from('exercises')
+    .select('id, name, equipment_needed, muscle_groups, is_compound')
+  if (error) throw error
+
+  const eligible = filterByEquipment(allExercises, profile.equipment_available ?? '')
+  const exerciseMap: Record<string, Exercise> = {}
+  eligible.forEach(ex => { exerciseMap[ex.name.toLowerCase().trim()] = ex })
+
+  const equipLabel = EQUIPMENT_LABELS[profile.equipment_available as EquipmentKey] ?? profile.equipment_available
+  const goalLabel = GOAL_LABELS[profile.fitness_goal as GoalKey] ?? profile.fitness_goal
+  const nameList = eligible.map(e => e.name).join('\n')
+  const DAY_NAMES_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const today = new Date()
+  const structureList = planConfig.structure
+    .map((s, i) => {
+      const d = new Date(today)
+      d.setDate(d.getDate() + i)
+      return `Day ${i + 1} (${DAY_NAMES_FULL[d.getDay()]}): ${s}`
+    })
+    .join('\n')
+
+  const prompt = `You are a professional strength and conditioning coach. Generate a personalized 7-day ${planConfig.name} workout plan.
+
+User profile:
+- Goal: ${goalLabel}
+- Experience: ${profile.experience_level}
+- Age: ${profile.age ?? 'unknown'}
+- Weight: ${profile.weight_kg ? profile.weight_kg + 'kg' : 'unknown'}
+- Equipment: ${equipLabel}
+- Injuries or limitations: ${profile.injuries || 'None'}
+
+Plan structure (7 days, Day 1 = Monday):
+${structureList}
+
+AVAILABLE EXERCISES (use ONLY these exact names, spelled exactly as shown):
+${nameList}
+
+Return ONLY valid JSON with no markdown. Exact structure:
+{"planName":"string","days":[{"dayOrder":1,"dayName":"string","isRest":false,"exercises":[{"exerciseName":"string","sets":3,"repRange":"8-12","note":null}]}]}
+
+Rules:
+- Include exactly 7 days, dayOrder 1-7
+- Rest days: set isRest to true and exercises to []
+- Training days: 4-7 exercises matching the day's session type
+- Use only exercises from the provided list
+- Avoid exercises that could aggravate: ${profile.injuries || 'none'}
+- Match rep ranges to goal: strength 4-6 reps, hypertrophy 6-12 reps, endurance 12-20 reps
+- note field: short string if exercise was modified due to injuries, otherwise null`
+
+  const plan = await callGemini(prompt) as {
+    planName: string
+    days: {
+      dayOrder: number
+      dayName: string
+      isRest: boolean
+      exercises: { exerciseName: string; sets: number; repRange: string; note?: string | null }[]
+    }[]
+  }
+
+  // Replace any existing plan for this user
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (supabase.from('workout_plans') as any).delete().eq('user_id', userId)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const planInsert = await (supabase.from('workout_plans') as any)
+    .insert({ user_id: userId, name: plan.planName, created_by_ai: true })
+    .select()
+    .single()
+  if (planInsert.error) throw planInsert.error
+  const savedPlan = planInsert.data as { id: string }
+
+  for (const day of plan.days) {
+    const exerciseIds = day.isRest ? [] : (day.exercises || [])
+      .map(e => {
+        const match = resolveExerciseByName(e.exerciseName, eligible, exerciseMap)
+        if (!match) { console.warn('Weekly plan: could not match exercise:', e.exerciseName); return null }
+        return { exerciseId: match.id, exerciseName: match.name, sets: e.sets, repRange: e.repRange, note: e.note || null }
+      })
+      .filter(Boolean)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase.from('plan_days') as any).insert({
+      plan_id: savedPlan.id,
+      day_name: day.dayName,
+      day_order: day.dayOrder,
+      exercise_ids: exerciseIds,
+    })
+  }
+
+  return savedPlan
+}
+
 export function getWeekStart() {
   const now = new Date()
   const day = now.getDay()

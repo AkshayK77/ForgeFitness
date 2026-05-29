@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
-import { generateOneOffSession, generateSessionFromPreferences, getWeekStart } from '../lib/workoutPlan'
+import { generateOneOffSession, generateSessionFromPreferences, generateWeeklyPlanByType, getWeekStart } from '../lib/workoutPlan'
 import { updateVolumeLog } from '../lib/volumeTracker'
 import { getProgressionSuggestion } from '../lib/progressiveOverload'
 import { callAgent, parseAgentJSON } from '../lib/geminiAgent'
@@ -42,6 +42,15 @@ function today() {
 }
 
 const ACTIVE_SESSION_KEY = 'forge_active_session_v1'
+
+// ─── weekly plan type options ─────────────────────────────────────────────────
+
+const WEEKLY_PLAN_TYPES = [
+  { id: 'ppl',      name: 'Push Pull Legs',     days: 6, structure: 'Push · Pull · Legs · Push · Pull · Legs · Rest' },
+  { id: 'ppl_ul',   name: 'PPL + Upper Lower',  days: 5, structure: 'Push · Pull · Legs · Upper · Lower · Rest · Rest' },
+  { id: 'bro',      name: 'Bro Split',           days: 6, structure: 'Chest · Back · Shoulders · Arms · Legs · Full Body · Rest' },
+  { id: 'full_body',name: 'Full Body',           days: 4, structure: 'Full Body · Rest · Full Body · Rest · Full Body · Rest · Full Body' },
+]
 
 // ─── generation modal constants ───────────────────────────────────────────────
 
@@ -297,6 +306,12 @@ export default function WorkoutPage() {
   const [modalOverdueMuscles, setModalOverdueMuscles] = useState<string[]>([])
   const [modalSuggestionCleared, setModalSuggestionCleared] = useState(false)
 
+  // Weekly plan modal
+  const [showPlanTypeModal, setShowPlanTypeModal] = useState(false)
+  const [generatingWeeklyPlan, setGeneratingWeeklyPlan] = useState(false)
+  const [selectedPlanType, setSelectedPlanType] = useState<string | null>(null)
+  const [expandedDayId, setExpandedDayId] = useState<string | null>(null)
+
   // Offline
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
@@ -383,7 +398,7 @@ export default function WorkoutPage() {
       supabase.from('profiles').select('*').eq('id', user!.id).single(),
       supabase
         .from('workout_plans')
-        .select('id, name, plan_days(id, day_name, day_order, exercise_ids)')
+        .select('id, name, created_at, plan_days(id, day_name, day_order, exercise_ids)')
         .eq('user_id', user!.id)
         .order('created_at', { ascending: false })
         .limit(1)
@@ -415,6 +430,16 @@ export default function WorkoutPage() {
     setRecentSessions((recentRaw as RecentRow[] | null) || [])
 
     if (planData) {
+      // Treat plan as stale if all 7 days have passed (created more than 7 days ago)
+      const planCreatedAt = (planData as unknown as { created_at?: string }).created_at
+      if (planCreatedAt) {
+        const expiryDate = new Date(planCreatedAt.split('T')[0] + 'T12:00:00')
+        expiryDate.setDate(expiryDate.getDate() + 7)
+        if (expiryDate.toISOString().split('T')[0] <= new Date().toISOString().split('T')[0]) {
+          setLoading(false)
+          return
+        }
+      }
       setPlan(planData as unknown as Record<string, unknown>)
       const days = (planData.plan_days || []).sort((a: PlanDayRow, b: PlanDayRow) => a.day_order - b.day_order)
       setPlanDays(days as unknown as PlanDay[])
@@ -818,6 +843,28 @@ export default function WorkoutPage() {
     }
   }
 
+  async function handleGenerateWeeklyPlan() {
+    if (!selectedPlanType || !profile) return
+    setGeneratingWeeklyPlan(true)
+    try {
+      await generateWeeklyPlanByType(user!.id, profile as Parameters<typeof generateWeeklyPlanByType>[1], selectedPlanType)
+      setShowPlanTypeModal(false)
+      setSelectedPlanType(null)
+      await loadPlanData()
+    } catch (err) {
+      console.error('Weekly plan generation failed:', err)
+      showToast('Could not generate plan. Check your Groq API key and try again.', 'error')
+    } finally {
+      setGeneratingWeeklyPlan(false)
+    }
+  }
+
+  function handleRegenerateWeeklyPlan() {
+    setSelectedPlanType(null)
+    setExpandedDayId(null)
+    setShowPlanTypeModal(true)
+  }
+
   async function fetchPreviousSets(exerciseIds: string[]): Promise<Record<string, Array<{w: string | null; r: number | null}>>> {
     if (!exerciseIds.length) return {}
     const { data } = await supabase
@@ -1005,6 +1052,54 @@ export default function WorkoutPage() {
     />
   )
 
+  const planTypeModal = showPlanTypeModal && (
+    <div style={s.modalOverlay} onClick={e => { if (e.target === e.currentTarget && !generatingWeeklyPlan) setShowPlanTypeModal(false) }}>
+      <div style={s.modalCard}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+          <div>
+            <div style={s.modalHeading}>Choose Your Split</div>
+            <div style={s.modalSubtitle}>Select a training structure for this week</div>
+          </div>
+          {!generatingWeeklyPlan && (
+            <button style={s.modalClose} onClick={() => setShowPlanTypeModal(false)}>×</button>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '24px' }}>
+          {WEEKLY_PLAN_TYPES.map(pt => {
+            const isSelected = selectedPlanType === pt.id
+            return (
+              <div
+                key={pt.id}
+                onClick={() => !generatingWeeklyPlan && setSelectedPlanType(pt.id)}
+                style={{
+                  padding: '14px 16px', borderRadius: '10px',
+                  cursor: generatingWeeklyPlan ? 'default' : 'pointer',
+                  border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                  background: isSelected ? 'rgba(200,245,90,0.06)' : 'var(--surface)',
+                  transition: 'border-color 0.12s, background 0.12s',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: '600', color: isSelected ? 'var(--accent)' : 'var(--text)' }}>{pt.name}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: '700', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{pt.days} days/wk</div>
+                </div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{pt.structure}</div>
+              </div>
+            )
+          })}
+        </div>
+
+        <button
+          style={{ ...s.btnAccent, width: '100%', padding: '12px', fontSize: '14px', ...(!selectedPlanType || generatingWeeklyPlan ? s.btnDisabled : {}) }}
+          onClick={handleGenerateWeeklyPlan}
+        >
+          {generatingWeeklyPlan ? 'Generating plan…' : 'Generate Plan'}
+        </button>
+      </div>
+    </div>
+  )
+
   const genModal = showGenModal && (
     <div style={s.modalOverlay}>
       <div style={s.modalCard}>
@@ -1181,6 +1276,7 @@ export default function WorkoutPage() {
         {logModal}
         {editModal}
         {genModal}
+        {planTypeModal}
         <div style={s.completionPage}>
           <div style={s.completionTitle}>Session Complete 🎉</div>
           <p style={s.completionSub}>Great work. Your data has been saved.</p>
@@ -1225,6 +1321,7 @@ export default function WorkoutPage() {
         {logModal}
         {editModal}
         {genModal}
+        {planTypeModal}
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           {/* Session header */}
           <div style={s.sessionHeader}>
@@ -1368,6 +1465,7 @@ export default function WorkoutPage() {
       {logModal}
       {editModal}
       {genModal}
+      {planTypeModal}
       <div style={{ ...s.page, padding: isMobile ? '16px 16px 24px' : '28px' }}>
         <h1 style={s.title}>Workout</h1>
         <p style={s.sub}>Select a session template or generate a fresh one with AI.</p>
@@ -1401,15 +1499,159 @@ export default function WorkoutPage() {
           <p style={{ color: 'var(--muted)', fontSize: '13px' }}>Loading plan…</p>
         ) : !plan ? (
           <div style={{ ...s.topCard, textAlign: 'center', padding: '32px' }}>
-            <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '16px' }}>
-              {profile?.fitness_goal && profile?.experience_level && profile?.sessions_per_week && profile?.equipment_available
-                ? 'No weekly plan yet — use "Generate with AI" above to build your first session.'
-                : 'No workout plan yet. Complete your profile in Settings or use "Generate with AI" above.'}
+            <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '20px' }}>
+              {profile?.fitness_goal && profile?.experience_level && profile?.equipment_available
+                ? 'No weekly plan for this week yet.'
+                : 'No workout plan yet. Complete your profile in Settings first.'}
             </p>
+            {!!(profile?.fitness_goal && profile?.experience_level && profile?.equipment_available) && (
+              <button
+                style={s.btnAccent}
+                onClick={() => { setSelectedPlanType(null); setShowPlanTypeModal(true) }}
+              >
+                Generate Weekly Plan
+              </button>
+            )}
           </div>
+        ) : planDays.length === 7 ? (
+          <>
+            {/* 7-day weekly plan view */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div style={s.sectionLabel}>{plan.name as string}</div>
+              <button
+                style={{ ...s.btnOutline, fontSize: '12px', padding: '6px 12px' }}
+                onClick={handleRegenerateWeeklyPlan}
+                onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border2)'}
+              >
+                Regenerate Plan
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {planDays.map(day => {
+                const exConfigs = (day.exercise_ids || []) as Array<Record<string, unknown>>
+                const isRest = exConfigs.length === 0
+                const isDone = completedDayIds.has(day.id)
+                const isExpanded = expandedDayId === day.id
+
+                // Compute the actual calendar date: day_order 1 = the day the plan was generated
+                const planStartStr = ((plan as Record<string, unknown>).created_at as string | undefined)?.split('T')[0] ?? new Date().toISOString().split('T')[0]
+                const weekStartDate = new Date(planStartStr + 'T12:00:00')
+                weekStartDate.setDate(weekStartDate.getDate() + day.day_order - 1)
+                const todayStr = new Date().toISOString().split('T')[0]
+                const dayDateStr = weekStartDate.toISOString().split('T')[0]
+                const isToday = dayDateStr === todayStr
+                const dateLabel = weekStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+                const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+                const dayShort = DAY_SHORT[weekStartDate.getDay()]
+
+                return (
+                  <div
+                    key={day.id}
+                    style={{
+                      background: isToday ? 'rgba(200,245,90,0.04)' : 'var(--surface)',
+                      border: `1px solid ${isToday ? 'var(--accent)' : 'var(--border)'}`,
+                      borderRadius: '10px',
+                      overflow: 'hidden',
+                      transition: 'border-color 0.15s',
+                    }}
+                  >
+                    {/* Row header — always visible */}
+                    <div
+                      onClick={() => !isRest && setExpandedDayId(isExpanded ? null : day.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                        padding: '12px 14px',
+                        cursor: isRest ? 'default' : 'pointer',
+                      }}
+                    >
+                      {/* Date pill */}
+                      <div style={{
+                        minWidth: '44px', textAlign: 'center', flexShrink: 0,
+                      }}>
+                        <div style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: isToday ? 'var(--accent)' : 'var(--dim)' }}>{dayShort}</div>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: isToday ? 'var(--accent)' : 'var(--text)', lineHeight: 1.2 }}>{dateLabel}</div>
+                      </div>
+
+                      {/* Session info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '13px', fontWeight: '600', color: isRest ? 'var(--dim)' : 'var(--text)', marginBottom: '2px' }}>
+                          {day.day_name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                          {isRest ? 'Rest' : `${exConfigs.length} exercise${exConfigs.length !== 1 ? 's' : ''}`}
+                        </div>
+                      </div>
+
+                      {/* Right side: done badge or chevron */}
+                      {isDone ? (
+                        <div style={{
+                          width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0,
+                          background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', fontWeight: '700', color: '#0a0a0a',
+                        }}>✓</div>
+                      ) : !isRest ? (
+                        <div style={{ color: 'var(--dim)', fontSize: '14px', flexShrink: 0, transition: 'transform 0.15s', transform: isExpanded ? 'rotate(180deg)' : 'none' }}>▾</div>
+                      ) : null}
+                    </div>
+
+                    {/* Expanded exercise list */}
+                    {isExpanded && (
+                      <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 14px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+                          {exConfigs.map((ex, i) => {
+                            const exName = (ex.exerciseName as string) || `Exercise ${i + 1}`
+                            const sets = ex.sets as number | undefined
+                            const repRange = ex.repRange as string | undefined
+                            const note = ex.note as string | null | undefined
+                            return (
+                              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                                <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: 'var(--surface2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: 'var(--dim)', flexShrink: 0, marginTop: '1px' }}>{i + 1}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text)' }}>{exName}</span>
+                                    <span style={{ fontSize: '11px', color: 'var(--muted)', flexShrink: 0 }}>{sets ? `${sets} × ` : ''}{repRange || ''}</span>
+                                  </div>
+                                  {note && <div style={{ fontSize: '10px', color: 'var(--amber)', marginTop: '2px' }}>{note}</div>}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <button
+                          style={{
+                            width: '100%', padding: '8px 0',
+                            background: isDone ? 'var(--surface3)' : 'var(--accent)',
+                            border: isDone ? '1px solid var(--border2)' : 'none',
+                            borderRadius: '7px',
+                            color: isDone ? 'var(--muted)' : '#0a0a0a',
+                            fontSize: '12px', fontWeight: '600', cursor: 'pointer',
+                          }}
+                          onClick={() => handleLoadTemplate(day)}
+                        >
+                          {isDone ? 'Redo session →' : 'Start session →'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
         ) : (
           <>
-            <div style={s.sectionLabel}>This week's plan — {plan.name as string}</div>
+            {/* Legacy plan view (onboarding-generated plans with < 7 days) */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div style={s.sectionLabel}>This week's plan — {plan.name as string}</div>
+              <button
+                style={{ ...s.btnOutline, fontSize: '12px', padding: '6px 12px' }}
+                onClick={handleRegenerateWeeklyPlan}
+                onMouseOver={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border2)'}
+              >
+                Regenerate Plan
+              </button>
+            </div>
             <div style={s.dayGrid}>
               {planDays.map((day, idx) => {
                 const dow = new Date().getDay()
@@ -1467,46 +1709,6 @@ export default function WorkoutPage() {
               })}
             </div>
           </>
-        )}
-
-        {/* Recent sessions */}
-        {recentSessions.length > 0 && (
-          <div style={{ marginTop: '28px' }}>
-            <div style={s.sectionLabel}>Recent sessions</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {recentSessions.map(sess => (
-                <div
-                  key={sess.id}
-                  style={{
-                    background: 'var(--surface)', border: '1px solid var(--border)',
-                    borderRadius: '10px', padding: '12px 16px',
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: '13px', fontWeight: '600' }}>{sess.name || 'Untitled session'}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
-                      {new Date(sess.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                      {sess.duration_minutes ? ` · ${sess.duration_minutes} min` : ''}
-                    </div>
-                  </div>
-                  <button
-                    style={{
-                      padding: '6px 14px', background: 'transparent',
-                      border: '1px solid var(--border2)', borderRadius: '7px',
-                      color: 'var(--muted)', fontSize: '12px', fontWeight: '500',
-                      cursor: 'pointer', transition: 'border-color 0.15s, color 0.15s',
-                    }}
-                    onClick={() => setEditSessionId(sess.id)}
-                    onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--text)' }}
-                    onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border2)'; e.currentTarget.style.color = 'var(--muted)' }}
-                  >
-                    Edit
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
         )}
       </div>
     </>
