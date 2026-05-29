@@ -105,9 +105,15 @@ async function geocode(query: string): Promise<Coords | null> {
 }
 
 async function fetchGyms(coords: Coords): Promise<Gym[]> {
-  const { data, error } = await supabase.functions.invoke('gyms', {
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Request timed out after 20s')), 20000)
+  )
+
+  const invoke = supabase.functions.invoke('gyms', {
     body: { lat: coords.lat, lng: coords.lng },
   })
+
+  const { data, error } = await Promise.race([invoke, timeout])
 
   if (error) throw new Error(error.message)
   if (data?.error) throw new Error(data.error)

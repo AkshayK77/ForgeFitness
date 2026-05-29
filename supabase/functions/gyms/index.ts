@@ -31,14 +31,21 @@ serve(async (req) => {
     let lastErr: unknown
     for (const endpoint of ENDPOINTS) {
       try {
-        const res = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`)
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 20000)
+        const res = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, { signal: controller.signal })
+        clearTimeout(timer)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
         return new Response(JSON.stringify(data), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          lastErr = new Error('Request timed out after 20s')
+        } else {
         lastErr = err
+        }
       }
     }
 
