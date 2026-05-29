@@ -28,6 +28,7 @@ export interface Database {
           onboarding_complete: boolean | null
           avatar_url: string | null
           diet_type: string | null
+          city: string | null
           updated_at: string | null
         }
         Insert: Partial<Database['public']['Tables']['profiles']['Row']>

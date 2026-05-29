@@ -350,6 +350,16 @@ export default function DashboardPage() {
           <div style={s.greetingText}>{greeting()}, {firstName}</div>
           <div style={s.greetingDate}>{todayLabel()}</div>
         </div>
+        {!isMobile && (
+          <button
+            onClick={() => navigate('/gyms')}
+            style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', padding: '7px 14px', color: 'var(--muted)', fontSize: '12px', fontWeight: '500', cursor: 'pointer', fontFamily: 'inherit' }}
+            onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)' }}
+            onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--muted)' }}
+          >
+            Find Gyms Near You
+          </button>
+        )}
         {streak.count > 0 ? (
           <div style={streak.isAmber ? s.streakBadgeAmber : s.streakBadge}>
             <span>{streak.isAmber ? '🔥' : '⚡'}</span>
@@ -359,6 +369,14 @@ export default function DashboardPage() {
           <div style={s.streakStart}>Start your streak</div>
         )}
       </div>
+      {isMobile && (
+        <button
+          onClick={() => navigate('/gyms')}
+          style={{ width: '100%', marginBottom: '20px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--muted)', fontSize: '13px', fontWeight: '500', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'center' }}
+        >
+          Find Gyms Near You
+        </button>
+      )}
 
       {/* ── Today's workout card ── */}
       <div style={s.sectionLabel}>Today's workout</div>

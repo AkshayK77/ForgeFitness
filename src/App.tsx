@@ -13,6 +13,7 @@ import ProgressPage from './pages/ProgressPage'
 import NutritionPage from './pages/NutritionPage'
 import AIPage from './pages/AIPage'
 import SettingsPage from './pages/SettingsPage'
+import GymsPage from './pages/GymsPage'
 
 function AppLayout() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
               <Route path="/nutrition" element={<NutritionPage />} />
               <Route path="/ai" element={<AIPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/gyms" element={<GymsPage />} />
             </Route>
           </Routes>
         </BrowserRouter>

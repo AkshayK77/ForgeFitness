@@ -179,7 +179,7 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)
 
-  const [basics, setBasics] = useState({ age: '', weight: '', height: '' })
+  const [basics, setBasics] = useState({ age: '', weight: '', height: '', city: '' })
   const [goal, setGoal] = useState('')
   const [experience, setExperience] = useState('')
   const [sessionsPerWeek, setSessionsPerWeek] = useState<number | null>(null)
@@ -206,6 +206,7 @@ export default function OnboardingPage() {
       injuries: injuries || null,
       dietary_preference: diet || null,
       allergies: allergies || null,
+      city: basics.city.trim() || null,
       onboarding_complete: true,
       updated_at: new Date().toISOString(),
     }
@@ -277,7 +278,20 @@ export default function OnboardingPage() {
                 </div>
               ))}
             </div>
-            <button style={s.continueBtn} onClick={next}>Continue</button>
+            <div style={s.numField}>
+              <label style={s.numLabel}>Your city / area</label>
+              <input
+                type="text"
+                placeholder="e.g. Koramangala, Bangalore"
+                value={basics.city}
+                onChange={e => setBasics(b => ({ ...b, city: e.target.value }))}
+                style={{ ...s.numInput, fontSize: '14px' }}
+                onFocus={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+                onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+              />
+              <span style={{ fontSize: '11px', color: 'var(--dim)', marginTop: '2px' }}>Used to find gyms near you</span>
+            </div>
+            <button style={{ ...s.continueBtn, marginTop: '28px' }} onClick={next}>Continue</button>
           </div>
         )}
 
