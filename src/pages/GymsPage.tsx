@@ -108,7 +108,8 @@ async function fetchGyms(coords: Coords): Promise<Gym[]> {
   const query = `[out:json];(node["leisure"="fitness_centre"](around:${RADIUS_M},${coords.lat},${coords.lng});node["amenity"="gym"](around:${RADIUS_M},${coords.lat},${coords.lng}););out body;`
   const res = await fetch('https://overpass-api.de/api/interpreter', {
     method: 'POST',
-    body: query,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `data=${encodeURIComponent(query)}`,
   })
   const data = await res.json() as { elements: Array<{ id: number; lat: number; lon: number; tags?: Record<string, string> }> }
 
