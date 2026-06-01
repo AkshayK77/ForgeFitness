@@ -98,16 +98,18 @@ AVAILABLE EXERCISES (use ONLY these exact names, spelled exactly as shown):
 ${nameList}
 
 Return ONLY valid JSON with no markdown, no code blocks, no backticks. Exact structure:
-{"planName":"string","days":[{"dayName":"string","dayOrder":1,"exercises":[{"exerciseName":"string","sets":3,"repRange":"8-12"}]}]}
+{"planName":"string","days":[{"dayName":"string","dayOrder":1,"exercises":[{"exerciseName":"string","sets":3,"repRange":"8-12","note":null}]}]}
 
 Rules:
 - Include exactly ${profile.sessions_per_week} training days
 - dayOrder starts at 1 and increments by 1
+- dayName must describe the workout type (e.g. "Push", "Pull", "Legs", "Upper Body", "Full Body", "Chest & Triceps") — never a calendar day name like "Monday"
 - Each training day: 4-7 exercises
 - Use only exercises from the provided list
 - Avoid exercises that could aggravate the stated injuries
 - Match rep ranges to goal: strength 4-6, hypertrophy 6-12, endurance 15-20
-- Balance muscle groups across the week`
+- Balance muscle groups across the week
+- note field: short string if exercise was chosen or modified due to injuries, otherwise null`
 }
 
 function buildSessionPrompt(profile: Profile, exercises: Exercise[], volumeThisWeek: Record<string, number>): string {
@@ -188,7 +190,7 @@ export async function generateAndSavePlan(userId: string, profile: Profile) {
   const prompt = buildPlanPrompt(profile, eligible)
   const plan = await callGemini(prompt) as {
     planName: string
-    days: { dayName: string; dayOrder: number; exercises: { exerciseName: string; sets: number; repRange: string }[] }[]
+    days: { dayName: string; dayOrder: number; exercises: { exerciseName: string; sets: number; repRange: string; note?: string | null }[] }[]
   }
 
   const { calories, protein } = calcNutrition(profile)
@@ -209,13 +211,13 @@ export async function generateAndSavePlan(userId: string, profile: Profile) {
 
   for (const day of plan.days) {
     const exerciseIds = (day.exercises || [])
-      .map((e: { exerciseName: string; sets: number; repRange: string }) => {
+      .map((e: { exerciseName: string; sets: number; repRange: string; note?: string | null }) => {
         const match = resolveExerciseByName(e.exerciseName, eligible, exerciseMap)
         if (!match) {
           console.warn('Plan: could not match exercise:', e.exerciseName)
           return null
         }
-        return { exerciseId: match.id, sets: e.sets, repRange: e.repRange }
+        return { exerciseId: match.id, exerciseName: match.name, sets: e.sets, repRange: e.repRange, note: e.note || null }
       })
       .filter(Boolean)
 
@@ -379,23 +381,25 @@ User profile:
 - Equipment: ${equipLabel}
 - Injuries or limitations: ${profile.injuries || 'None'}
 
-Plan structure (7 days, Day 1 = Monday):
+Plan structure (Day 1 = today):
 ${structureList}
 
 AVAILABLE EXERCISES (use ONLY these exact names, spelled exactly as shown):
 ${nameList}
 
 Return ONLY valid JSON with no markdown. Exact structure:
-{"planName":"string","days":[{"dayOrder":1,"dayName":"string","isRest":false,"exercises":[{"exerciseName":"string","sets":3,"repRange":"8-12","note":null}]}]}
+{"planName":"string","days":[{"dayOrder":1,"dayName":"string","isRest":false,"explanation":null,"exercises":[{"exerciseName":"string","sets":3,"repRange":"8-12","note":null}]}]}
 
 Rules:
 - Include exactly 7 days, dayOrder 1-7
-- Rest days: set isRest to true and exercises to []
+- Rest days: set isRest to true, exercises to [], and explanation to null
 - Training days: 4-7 exercises matching the day's session type
 - Use only exercises from the provided list
 - Avoid exercises that could aggravate: ${profile.injuries || 'none'}
 - Match rep ranges to goal: strength 4-6 reps, hypertrophy 6-12 reps, endurance 12-20 reps
-- note field: short string if exercise was modified due to injuries, otherwise null`
+- dayName must be the session type shown after the colon in the plan structure (e.g. "Push Day", "Pull Day", "Legs Day", "Full Body") — never the calendar day name in parentheses
+- note field: short string if exercise was modified due to injuries, otherwise null
+- explanation field: for training days only, 2-3 sentences in plain conversational language — what muscles this session targets and why it fits the user's goal, plus any specific accommodations made for the user's injuries (skip injury mention if none listed)`
 
   const plan = await callGemini(prompt) as {
     planName: string
@@ -403,6 +407,7 @@ Rules:
       dayOrder: number
       dayName: string
       isRest: boolean
+      explanation?: string | null
       exercises: { exerciseName: string; sets: number; repRange: string; note?: string | null }[]
     }[]
   }
@@ -433,7 +438,7 @@ Rules:
       plan_id: savedPlan.id,
       day_name: day.dayName,
       day_order: day.dayOrder,
-      exercise_ids: exerciseIds,
+      exercise_ids: { exercises: exerciseIds, explanation: day.explanation || null },
     })
   }
 
@@ -585,12 +590,15 @@ RULES FOR GENERATING SETS, REPS, AND RPE:
 10. targetRPE is a number 1-10 (1=very easy, 10=absolute max effort). Must be between 5 and 10.
 
 Return ONLY a valid JSON object with no markdown, no backticks, no explanation. Exact structure:
-{"sessionName":"string","estimatedDuration":number,"exercises":[{"exerciseName":"string","sets":number,"repRange":"string","targetRPE":number,"notes":"string"}]}
-Return only valid JSON. No markdown, no backticks, no explanation.`
+{"sessionName":"string","estimatedDuration":number,"explanation":"string","exercises":[{"exerciseName":"string","sets":number,"repRange":"string","targetRPE":number,"notes":"string"}]}
+
+explanation field: 2-3 sentences in plain conversational language — what muscles this session targets and why, plus any specific accommodations made for the user's injuries (skip injury mention if none listed).
+Return only valid JSON. No markdown, no backticks, no explanation text outside the JSON.`
 
   const result = await callGemini(prompt) as {
     sessionName: string
     estimatedDuration: number
+    explanation?: string
     exercises: { exerciseName: string; sets: number; repRange: string; targetRPE?: number; notes?: string }[]
   }
 
@@ -637,6 +645,7 @@ Return only valid JSON. No markdown, no backticks, no explanation.`
     notes: JSON.stringify({
       sessionName: result.sessionName,
       generatedExerciseIds: processedExercises.map(ex => ex.exercise.id),
+      explanation: result.explanation || null,
     }),
   }
   console.log('Inserting session:', JSON.stringify(sessionRow, null, 2))
@@ -652,5 +661,5 @@ Return only valid JSON. No markdown, no backticks, no explanation.`
   }
   const session = sessInsert2.data as { id: string }
 
-  return { session, exercises: processedExercises, sessionName: result.sessionName }
+  return { session, exercises: processedExercises, sessionName: result.sessionName, explanation: result.explanation || null }
 }

@@ -171,7 +171,7 @@ export default function DashboardPage() {
 
     type ProfRow = Profile
     type PlanDayRow = { id: string; day_name: string; day_order: number; exercise_ids: unknown }
-    type PlanRow = { id: string; name: string; plan_days: PlanDayRow[] }
+    type PlanRow = { id: string; name: string; created_at: string; plan_days: PlanDayRow[] }
 
     const profRes = await supabase.from('profiles').select('*').eq('id', user!.id).single()
     const prof = profRes.data as ProfRow | null
@@ -179,7 +179,7 @@ export default function DashboardPage() {
 
     const planRes = await supabase
       .from('workout_plans')
-      .select('id, name, plan_days(id, day_name, day_order, exercise_ids)')
+      .select('id, name, created_at, plan_days(id, day_name, day_order, exercise_ids)')
       .eq('user_id', user!.id)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -196,12 +196,17 @@ export default function DashboardPage() {
     setStreak(streakVal)
     setNutrition(nutritionData)
 
-    // Today's workout day
+    // Today's workout day — find by matching calendar date to plan day_order
     if (planData) {
       const days = (planData.plan_days || []).sort((a, b) => a.day_order - b.day_order)
-      const dow = new Date().getDay()
-      const idx = dow === 0 ? days.length - 1 : Math.min(dow - 1, days.length - 1)
-      const day = days[idx] ?? days[0]
+      const planStartStr = planData.created_at?.split('T')[0] ?? new Date().toISOString().split('T')[0]
+      const now = new Date()
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const day = days.find(d => {
+        const dayDate = new Date(planStartStr + 'T12:00:00')
+        dayDate.setDate(dayDate.getDate() + d.day_order - 1)
+        return dayDate.toISOString().split('T')[0] === todayStr
+      }) ?? days[0]
       setTodayDay(day ?? null)
 
       const rawIds = Array.isArray(day?.exercise_ids) ? day.exercise_ids : []

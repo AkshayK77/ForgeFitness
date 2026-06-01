@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { generateAndSavePlan } from '../lib/workoutPlan'
+import { prewarmGymsCache } from '../lib/gymCache'
 
 const TOTAL_STEPS = 5
 
@@ -212,6 +213,11 @@ export default function OnboardingPage() {
     }
 
     await (supabase.from('profiles') as any).upsert(profile)
+
+    // Pre-warm gym map cache in the background so the map is ready on first open
+    if (basics.city.trim()) {
+      prewarmGymsCache(basics.city.trim())
+    }
 
     try {
       await generateAndSavePlan(user!.id, profile as any)

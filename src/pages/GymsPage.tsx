@@ -6,6 +6,12 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
 import { useIsMobile } from '../hooks/useIsMobile'
 import type { Profile } from '../types/supabase'
+import {
+  LOC_CACHE_KEY, GYMS_CACHE_KEY,
+  readLocCache, writeLocCache, readGymsCache, writeGymsCache,
+  geocode, haversineKm,
+} from '../lib/gymCache'
+import type { Coords } from '../lib/gymCache'
 
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
@@ -14,8 +20,6 @@ delete (L.Icon.Default.prototype as any)._getIconUrl
 L.Icon.Default.mergeOptions({ iconUrl: markerIcon, iconRetinaUrl: markerIcon2x, shadowUrl: markerShadow })
 
 // ─── types ────────────────────────────────────────────────────────────────────
-
-interface Coords { lat: number; lng: number }
 
 interface Gym {
   id: number
@@ -26,84 +30,10 @@ interface Gym {
   distanceKm: number
 }
 
-interface LocationCache {
-  lat: number
-  lng: number
-  name: string
-  source: 'profile' | 'gps' | 'manual'
-  timestamp: number
-}
-
-interface GymsCache {
-  gyms: Gym[]
-  lat: number
-  lng: number
-  timestamp: number
-}
-
 // ─── constants ────────────────────────────────────────────────────────────────
 
-const LOC_CACHE_KEY = 'forge_gym_location'
-const GYMS_CACHE_KEY = 'forge_gyms_cache'
-const LOC_TTL = 7 * 24 * 60 * 60 * 1000
-const GYMS_TTL = 24 * 60 * 60 * 1000
 const RADIUS_M = 10000
 const MAP_ZOOM = 15
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function haversineKm(a: Coords, b: Coords): number {
-  const R = 6371
-  const dLat = ((b.lat - a.lat) * Math.PI) / 180
-  const dLng = ((b.lng - a.lng) * Math.PI) / 180
-  const sin2 = Math.sin(dLat / 2) ** 2 + Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.asin(Math.sqrt(sin2))
-}
-
-function coordsMatch(a: Coords, b: Coords): boolean {
-  return haversineKm(a, b) < 0.1
-}
-
-function readLocCache(): LocationCache | null {
-  try {
-    const raw = localStorage.getItem(LOC_CACHE_KEY)
-    if (!raw) return null
-    const cache = JSON.parse(raw) as LocationCache
-    if (Date.now() - cache.timestamp > LOC_TTL) return null
-    return cache
-  } catch { return null }
-}
-
-function writeLocCache(lat: number, lng: number, name: string, source: LocationCache['source']) {
-  localStorage.setItem(LOC_CACHE_KEY, JSON.stringify({ lat, lng, name, source, timestamp: Date.now() }))
-}
-
-function readGymsCache(coords: Coords): Gym[] | null {
-  try {
-    const raw = localStorage.getItem(GYMS_CACHE_KEY)
-    if (!raw) return null
-    const cache = JSON.parse(raw) as GymsCache
-    if (Date.now() - cache.timestamp > GYMS_TTL) return null
-    if (!coordsMatch(coords, { lat: cache.lat, lng: cache.lng })) return null
-    return cache.gyms
-  } catch { return null }
-}
-
-function writeGymsCache(gyms: Gym[], coords: Coords) {
-  localStorage.setItem(GYMS_CACHE_KEY, JSON.stringify({ gyms, lat: coords.lat, lng: coords.lng, timestamp: Date.now() }))
-}
-
-async function geocode(query: string): Promise<Coords | null> {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`,
-      { headers: { 'Accept-Language': 'en' } }
-    )
-    const data = await res.json() as Array<{ lat: string; lon: string }>
-    if (!data.length) return null
-    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
-  } catch { return null }
-}
 
 async function reverseGeocode(coords: Coords): Promise<string> {
   try {
@@ -355,7 +285,7 @@ export default function GymsPage() {
     setCoords(c)
     const cached = readGymsCache(c)
     if (cached) {
-      setGyms(cached)
+      setGyms(cached as Gym[])
       setStatus('done')
       return
     }

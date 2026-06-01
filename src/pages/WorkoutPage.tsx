@@ -15,21 +15,29 @@ interface SessionExercise {
   exercise: { id: string; name: string; muscle_groups?: string[] }
   sets: number
   repRange?: string
+  note?: string | null
   targetRPE?: number
   notes?: string
   prevSets: Array<{ w: string | null; r: number | null }>
   currentSets: Array<{ reps: string | number; completed: boolean; weight?: string }>
   progressionHint?: { shouldIncrease?: boolean; reason?: string } | null
 }
-interface ActiveSession { id: string; name: string; planDayId?: string }
+interface ActiveSession { id: string; name: string; planDayId?: string; explanation?: string | null }
 interface CompletionData {
   durationMinutes: number; totalSets: number; totalExercises: number
   prs: Array<{ name: string; oldMax: number; newMax: number; reps?: number | null }>
 }
 interface WarmupExercise { exercise: string; sets: number | string; reps: number | string; notes?: string }
-interface PlanDay { id: string; day_name: string; day_order: number; exercise_ids?: Array<Record<string, unknown>> }
+interface PlanDay { id: string; day_name: string; day_order: number; exercise_ids?: Array<Record<string, unknown>> | { exercises: Array<Record<string, unknown>>; explanation?: string | null } }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+function normalizePlanDay(day: PlanDay): { exercises: Array<Record<string, unknown>>; explanation: string | null } {
+  const raw = day.exercise_ids
+  if (!raw) return { exercises: [], explanation: null }
+  if (Array.isArray(raw)) return { exercises: raw, explanation: null }
+  return { exercises: raw.exercises || [], explanation: raw.explanation || null }
+}
 
 function fmtTime(secs: number) {
   const m = String(Math.floor(secs / 60)).padStart(2, '0')
@@ -154,7 +162,7 @@ const s: Record<string, React.CSSProperties> = {
 
   // Exercise cards
   exerciseList: { padding: '20px 28px', display: 'flex', flexDirection: 'column', gap: '16px' },
-  exCard: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' },
+  exCard: { background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 },
   exHeader: { padding: '14px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', borderBottom: '1px solid var(--border)' },
   exName: { fontSize: '14px', fontWeight: '600' },
   exMuscles: { fontSize: '11px', color: 'var(--accent)', marginTop: '3px' },
@@ -234,7 +242,7 @@ const s: Record<string, React.CSSProperties> = {
 
   // Warm-up card
   warmupCard: {
-    margin: '16px 28px 0',
+    flexShrink: 0,
     background: 'rgba(245,166,35,0.06)',
     border: '1px solid rgba(245,166,35,0.3)',
     borderRadius: '10px',
@@ -618,7 +626,7 @@ export default function WorkoutPage() {
     const day = dayOverride ?? selectedDay
     if (!day) return
     type ExerciseCfg = { exerciseId?: string; sets?: number; repRange?: string; [k: string]: unknown }
-    const exerciseConfigs = (Array.isArray(day.exercise_ids) ? day.exercise_ids : []) as ExerciseCfg[]
+    const { exercises: exerciseConfigs, explanation: dayExplanation } = normalizePlanDay(day)
     if (!exerciseConfigs.length) return
 
     const ids = exerciseConfigs.map(e => e.exerciseId ?? String(e)).filter(Boolean) as string[]
@@ -646,6 +654,7 @@ export default function WorkoutPage() {
           exercise: ex,
           sets: numSets,
           repRange: cfg.repRange || '8-12',
+          note: (cfg.note as string | null) || null,
           prevSets: prev,
           currentSets: Array.from({ length: numSets }, () => ({ reps: '', completed: false })),
           progressionHint: null,
@@ -658,7 +667,7 @@ export default function WorkoutPage() {
     )
     const sessionExsWithHints = sessionExs.map((ex, i) => ({ ...ex, progressionHint: hints[i] }))
 
-    setActiveSession({ id: sess?.id ?? '', name: day.day_name, planDayId: day.id })
+    setActiveSession({ id: sess?.id ?? '', name: day.day_name, planDayId: day.id, explanation: dayExplanation })
     setSessionExercises(sessionExsWithHints as SessionExercise[])
     setActiveSessionExercises(sessionExsWithHints.map(ex => ex.exercise))
     setExerciseDone({})
@@ -797,7 +806,7 @@ export default function WorkoutPage() {
         minutes: modalMinutes,
         feeling: modalFeeling,
       }
-      const { session, exercises, sessionName } = await generateSessionFromPreferences(user!.id, profile as Parameters<typeof generateSessionFromPreferences>[1], preferences)
+      const { session, exercises, sessionName, explanation } = await generateSessionFromPreferences(user!.id, profile as Parameters<typeof generateSessionFromPreferences>[1], preferences)
       const ids = exercises.map(e => e.exercise.id)
       const prevSetsMap = await fetchPreviousSets(ids)
 
@@ -807,7 +816,7 @@ export default function WorkoutPage() {
           sets,
           repRange,
           targetRPE,
-          notes,
+          note: notes || null,
           prevSets: prevSetsMap[exercise.id] || [],
           currentSets: Array.from({ length: sets }, () => ({ reps: '', completed: false })),
           progressionHint: null,
@@ -819,7 +828,7 @@ export default function WorkoutPage() {
       )
       const sessionExsWithHints = sessionExs.map((ex, i) => ({ ...ex, progressionHint: hints[i] }))
 
-      setActiveSession({ id: session.id, name: sessionName })
+      setActiveSession({ id: session.id, name: sessionName, explanation })
       setSessionExercises(sessionExsWithHints as SessionExercise[])
       setActiveSessionExercises(sessionExsWithHints.map(ex => ex.exercise))
       setExerciseDone({})
@@ -1324,7 +1333,7 @@ export default function WorkoutPage() {
         {planTypeModal}
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           {/* Session header */}
-          <div style={s.sessionHeader}>
+          <div style={{ ...s.sessionHeader, padding: isMobile ? '12px 16px' : '14px 28px' }}>
             <div>
               <div style={s.sessionName}>{activeSession?.name}</div>
               <div style={s.sessionMeta}>{new Date().toLocaleDateString('en-GB', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
@@ -1367,7 +1376,17 @@ export default function WorkoutPage() {
           )}
 
           {/* Exercise cards */}
-          <div style={{ ...s.exerciseList, flex: 1, overflowY: 'auto' }}>
+          <div style={{ ...s.exerciseList, flex: 1, overflowY: 'auto', padding: isMobile ? '16px' : '20px 28px' }}>
+            {activeSession?.explanation && (
+              <div style={{
+                flexShrink: 0,
+                background: 'var(--surface)', border: '1px solid var(--border)',
+                borderRadius: '10px', padding: '12px 14px',
+              }}>
+                <div style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: '5px' }}>Why this workout?</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.55' }}>{activeSession.explanation}</div>
+              </div>
+            )}
             {warmup && !warmupDismissed && (
               <div style={s.warmupCard}>
                 <div style={s.warmupHeader}>
@@ -1393,11 +1412,17 @@ export default function WorkoutPage() {
               return (
                 <div key={ex.exercise.id} style={s.exCard}>
                   <div style={s.exHeader}>
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={s.exName}>{ex.exercise.name}</div>
                       <div style={s.exMuscles}>
                         {(ex.exercise.muscle_groups || []).slice(0, 3).map(m => m.replace(/_/g, ' ')).join(' · ')}
                       </div>
+                      {ex.note && (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '5px', marginTop: '5px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--amber)', flexShrink: 0, lineHeight: '16px' }}>⚠</span>
+                          <span style={{ fontSize: '11px', color: 'var(--amber)', lineHeight: '16px' }}>{ex.note}</span>
+                        </div>
+                      )}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Rep range: {ex.repRange || '—'}</span>
                         <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Recommended sets: {recommendedSets}</span>
@@ -1414,7 +1439,7 @@ export default function WorkoutPage() {
                         </label>
                       </div>
                     </div>
-                    <div>
+                    <div style={{ flexShrink: 0, marginLeft: '12px', textAlign: 'right' }}>
                       {prevMax ? <div style={s.exPrevWeight}>Prev best: {prevMax}kg</div> : null}
                       {hint ? <div style={s.exProgressionHint}>{hint}</div> : null}
                     </div>
@@ -1517,7 +1542,14 @@ export default function WorkoutPage() {
           <>
             {/* 7-day weekly plan view */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <div style={s.sectionLabel}>{plan.name as string}</div>
+              <div>
+                <div style={s.sectionLabel}>{plan.name as string}</div>
+                {profile?.sessions_per_week && (
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '3px' }}>
+                    Based on your preference of <span style={{ color: 'var(--accent)', fontWeight: '600' }}>{profile.sessions_per_week as number} workout{(profile.sessions_per_week as number) !== 1 ? 's' : ''}</span> per week
+                  </div>
+                )}
+              </div>
               <button
                 style={{ ...s.btnOutline, fontSize: '12px', padding: '6px 12px' }}
                 onClick={handleRegenerateWeeklyPlan}
@@ -1529,7 +1561,7 @@ export default function WorkoutPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {planDays.map(day => {
-                const exConfigs = (day.exercise_ids || []) as Array<Record<string, unknown>>
+                const { exercises: exConfigs, explanation: dayExplanation } = normalizePlanDay(day)
                 const isRest = exConfigs.length === 0
                 const isDone = completedDayIds.has(day.id)
                 const isExpanded = expandedDayId === day.id
@@ -1538,9 +1570,11 @@ export default function WorkoutPage() {
                 const planStartStr = ((plan as Record<string, unknown>).created_at as string | undefined)?.split('T')[0] ?? new Date().toISOString().split('T')[0]
                 const weekStartDate = new Date(planStartStr + 'T12:00:00')
                 weekStartDate.setDate(weekStartDate.getDate() + day.day_order - 1)
-                const todayStr = new Date().toISOString().split('T')[0]
+                const _now = new Date()
+                const todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`
                 const dayDateStr = weekStartDate.toISOString().split('T')[0]
                 const isToday = dayDateStr === todayStr
+                const isPast = dayDateStr < todayStr
                 const dateLabel = weekStartDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
                 const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
                 const dayShort = DAY_SHORT[weekStartDate.getDay()]
@@ -1583,13 +1617,20 @@ export default function WorkoutPage() {
                         </div>
                       </div>
 
-                      {/* Right side: done badge or chevron */}
+                      {/* Right side: done badge, missed badge, or chevron */}
                       {isDone ? (
                         <div style={{
                           width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0,
                           background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                           fontSize: '10px', fontWeight: '700', color: '#0a0a0a',
                         }}>✓</div>
+                      ) : isPast && !isRest ? (
+                        <div style={{
+                          width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0,
+                          background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.5)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '10px', fontWeight: '700', color: '#FBBF24',
+                        }}>!</div>
                       ) : !isRest ? (
                         <div style={{ color: 'var(--dim)', fontSize: '14px', flexShrink: 0, transition: 'transform 0.15s', transform: isExpanded ? 'rotate(180deg)' : 'none' }}>▾</div>
                       ) : null}
@@ -1598,6 +1639,12 @@ export default function WorkoutPage() {
                     {/* Expanded exercise list */}
                     {isExpanded && (
                       <div style={{ borderTop: '1px solid var(--border)', padding: '10px 14px 14px' }}>
+                        {dayExplanation && (
+                          <div style={{ marginBottom: '10px', paddingBottom: '10px', borderBottom: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: '4px' }}>Why this workout?</div>
+                            <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.55' }}>{dayExplanation}</div>
+                          </div>
+                        )}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
                           {exConfigs.map((ex, i) => {
                             const exName = (ex.exerciseName as string) || `Exercise ${i + 1}`
@@ -1642,7 +1689,14 @@ export default function WorkoutPage() {
           <>
             {/* Legacy plan view (onboarding-generated plans with < 7 days) */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <div style={s.sectionLabel}>This week's plan — {plan.name as string}</div>
+              <div>
+                <div style={s.sectionLabel}>This week's plan — {plan.name as string}</div>
+                {profile?.sessions_per_week && (
+                  <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '3px' }}>
+                    Based on your preference of <span style={{ color: 'var(--accent)', fontWeight: '600' }}>{profile.sessions_per_week as number} workout{(profile.sessions_per_week as number) !== 1 ? 's' : ''}</span> per week
+                  </div>
+                )}
+              </div>
               <button
                 style={{ ...s.btnOutline, fontSize: '12px', padding: '6px 12px' }}
                 onClick={handleRegenerateWeeklyPlan}
@@ -1653,12 +1707,18 @@ export default function WorkoutPage() {
               </button>
             </div>
             <div style={s.dayGrid}>
-              {planDays.map((day, idx) => {
-                const dow = new Date().getDay()
-                const isToday = idx === (dow === 0 ? planDays.length - 1 : Math.min(dow - 1, planDays.length - 1))
+              {planDays.map((day) => {
+                const planStartStr = ((plan as Record<string, unknown>).created_at as string | undefined)?.split('T')[0] ?? new Date().toISOString().split('T')[0]
+                const dayDate = new Date(planStartStr + 'T12:00:00')
+                dayDate.setDate(dayDate.getDate() + day.day_order - 1)
+                const _now = new Date()
+                const todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`
+                const dayDateStr = dayDate.toISOString().split('T')[0]
+                const isToday = dayDateStr === todayStr
+                const isPast = dayDateStr < todayStr
                 const isSelected = selectedDay?.id === day.id
                 const isDone = completedDayIds.has(day.id)
-                const exConfigs = day.exercise_ids || []
+                const { exercises: exConfigs } = normalizePlanDay(day)
                 return (
                   <div
                     key={day.id}
@@ -1671,14 +1731,22 @@ export default function WorkoutPage() {
                     }}
                     onClick={() => setSelectedDay(day)}
                   >
-                    {isDone && (
+                    {isDone ? (
                       <div style={{
                         position: 'absolute', top: '10px', right: '10px',
                         width: '18px', height: '18px', borderRadius: '50%',
                         background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
                         fontSize: '10px', fontWeight: '700', color: '#0a0a0a',
                       }}>✓</div>
-                    )}
+                    ) : isPast && exConfigs.length > 0 ? (
+                      <div style={{
+                        position: 'absolute', top: '10px', right: '10px',
+                        width: '18px', height: '18px', borderRadius: '50%',
+                        background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.5)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '10px', fontWeight: '700', color: '#FBBF24',
+                      }}>!</div>
+                    ) : null}
                     <div style={s.dayName}>
                       {isToday && <span style={{ color: 'var(--accent)', marginRight: '6px', fontSize: '10px', fontWeight: '700', letterSpacing: '0.08em', textTransform: 'uppercase' }}>TODAY · </span>}
                       {day.day_name}
