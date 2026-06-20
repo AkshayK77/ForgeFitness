@@ -1,5 +1,9 @@
 # KavaFit
 
+<p align="center">
+  <img src="public/logo.png" alt="KavaFit" width="480" />
+</p>
+
 > Train smarter. Progress faster.
 
 KavaFit is an AI-powered fitness coaching app that builds personalized workout plans, tracks your sessions in real time, and adapts to how you train — all in one place.
